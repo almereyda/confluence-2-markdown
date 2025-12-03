@@ -1,14 +1,17 @@
 import argparse
-import os
-import requests
-from getpass import getpass
-from markdownify import MarkdownConverter
-from urllib.parse import urlparse, parse_qs, unquote_plus, unquote
 import base64
 import json
+import os
 import re
+from getpass import getpass
+from urllib.parse import parse_qs, unquote, unquote_plus, urlparse
+
+import requests
 import urllib3
+from markdownify import MarkdownConverter
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 def extract_page_info(page_url):
     """
@@ -25,9 +28,11 @@ def extract_page_info(page_url):
         if space_key and raw_title:
             page_title = unquote_plus(raw_title)
             return space_key, page_title, None
-        raise ValueError("Neither pageId nor (spaceKey + title) found in the URL query.")
+        raise ValueError(
+            "Neither pageId nor (spaceKey + title) found in the URL query."
+        )
     elif "display" in parsed.path:
-        parts = parsed.path.split('/')
+        parts = parsed.path.split("/")
         if len(parts) >= 3:
             space_key = parts[2]
             page_title = unquote_plus(parts[3]) if len(parts) >= 4 else ""
@@ -35,34 +40,52 @@ def extract_page_info(page_url):
         else:
             raise ValueError("PAGE_URL in /display/ format does not have enough parts.")
     elif "wiki" in parsed.path and "spaces" in parsed.path:
-        parts = parsed.path.split('/')
+        parts = parsed.path.split("/")
         if len(parts) >= 7:
             space_key = parts[3]
             page_title = unquote_plus(parts[6])
             return space_key, page_title, None
         else:
-            raise ValueError("PAGE_URL in /wiki/spaces/ format does not have enough parts.")
+            raise ValueError(
+                "PAGE_URL in /wiki/spaces/ format does not have enough parts."
+            )
     else:
         raise ValueError("PAGE_URL does not follow a recognized Confluence URL format.")
 
-def clear_images_folder(folder="images"):
-    if os.path.exists(folder):
-        for filename in os.listdir(folder):
-            file_path = os.path.join(folder, filename)
-            try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-            except Exception as e:
-                print(f"Failed to delete {file_path}. Reason: {e}")
-    else:
-        os.makedirs(folder)
+
+# def clear_images_folder(folder="images"):
+#     if os.path.exists(folder):
+#         for filename in os.listdir(folder):
+#             file_path = os.path.join(folder, filename)
+#             try:
+#                 if os.path.isfile(file_path) or os.path.islink(file_path):
+#                     os.unlink(file_path)
+#             except Exception as e:
+#                 print(f"Failed to delete {file_path}. Reason: {e}")
+#     else:
+#         os.makedirs(folder)
+
 
 def download_image(image_url, local_path):
-    response = requests.get(image_url, headers=headers, verify=False)
-    response.raise_for_status()
-    with open(local_path, 'wb') as f:
-        f.write(response.content)
-    print(f"Image downloaded: {local_path}")
+    if not os.path.isfile(local_path):
+        try:
+            response = requests.get(
+                image_url, headers=headers, verify=False, stream=True
+            )
+            response.raise_for_status()
+            if response.status_code == 200:
+                with open(local_path, "wb") as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+            print(f"Image downloaded: {local_path}")
+
+        except urllib3.exceptions.RequestError as e:
+            print(f"Network Error: {e}")
+        except Exception as e:
+            print(f"Error: {e}")
+    else:
+        print(f"Image {local_path} exists, not downloading.")
+
 
 def get_drawio_attachment(content_id, diagram_name=None):
     """
@@ -73,8 +96,9 @@ def get_drawio_attachment(content_id, diagram_name=None):
     r.raise_for_status()
     att_data = r.json()
 
-    png_attachments = [a for a in att_data["results"]
-                       if a["metadata"].get("mediaType") == "image/png"]
+    png_attachments = [
+        a for a in att_data["results"] if a["metadata"].get("mediaType") == "image/png"
+    ]
 
     if not png_attachments:
         return None, None
@@ -94,6 +118,7 @@ def get_drawio_attachment(content_id, diagram_name=None):
     first = png_attachments[0]
     dl_link = first["_links"]["download"]
     return BASE_URL.rstrip("/") + dl_link, first["title"]
+
 
 class TwoPassConverter(MarkdownConverter):
     """
@@ -117,9 +142,9 @@ class TwoPassConverter(MarkdownConverter):
         E.g. "Background Info" -> "background-info"
         """
         slug = text.strip().lower()
-        slug = re.sub(r"[^\w\s-]", "", slug)    # Remove punctuation
-        slug = re.sub(r"\s+", "-", slug)        # Spaces -> dashes
-        slug = re.sub(r"-+", "-", slug)         # Collapse multiple dashes
+        slug = re.sub(r"[^\w\s-]", "", slug)  # Remove punctuation
+        slug = re.sub(r"\s+", "-", slug)  # Spaces -> dashes
+        slug = re.sub(r"-+", "-", slug)  # Collapse multiple dashes
         return slug
 
     #
@@ -167,8 +192,8 @@ class TwoPassConverter(MarkdownConverter):
                 prefix += span_txt
 
         # Clean up the main heading text. Remove extra newlines, etc.
-        heading_text_stripped = heading_text.replace('\u00a0', ' ')
-        heading_text_stripped = re.sub(r'\s+', ' ', heading_text_stripped).strip()
+        heading_text_stripped = heading_text.replace("\u00a0", " ")
+        heading_text_stripped = re.sub(r"\s+", " ", heading_text_stripped).strip()
 
         # if heading_text_stripped already starts with the same prefix, skip merging it
         # if heading_text already starts with a digit+dot, let's assume it's got a prefix
@@ -201,7 +226,7 @@ class TwoPassConverter(MarkdownConverter):
     # IMAGES
     #
     def convert_img(self, el, text, convert_as_inline):
-        src = el.attrs.get('data-image-src', el.attrs.get('src'))
+        src = el.attrs.get("data-image-src", el.attrs.get("src"))
         if src and not src.startswith("http"):
             src = BASE_URL.rstrip("/") + src.replace("//", "")
         print("Detected normal image:", src)
@@ -211,13 +236,13 @@ class TwoPassConverter(MarkdownConverter):
 
         parsed_src = urlparse(src)
         local_filename = unquote(os.path.basename(parsed_src.path))
-        local_path = os.path.join("images", local_filename)
+        local_path = os.path.join("content", local_filename)
         try:
             download_image(src, local_path)
-            el.attrs['src'] = f"./images/{local_filename}"
+            el.attrs["src"] = f"{local_filename}"
         except Exception as e:
             print(f"Error downloading image {src}: {e}")
-            el.attrs['src'] = src
+            el.attrs["src"] = src
 
         return super().convert_img(el, text, convert_as_inline) + "\n\n"
 
@@ -225,14 +250,14 @@ class TwoPassConverter(MarkdownConverter):
     # LINKS
     #
     def convert_a(self, el, text, convert_as_inline):
-        href = el.attrs.get('href', '')
+        href = el.attrs.get("href", "")
         if not href:
             return super().convert_a(el, text, convert_as_inline)
-        if re.match(r'^(https?://|mailto:)', href):
+        if re.match(r"^(https?://|mailto:)", href):
             return super().convert_a(el, text, convert_as_inline)
 
         href = BASE_URL.rstrip("/") + href
-        el.attrs['href'] = href
+        el.attrs["href"] = href
 
         return super().convert_a(el, text, convert_as_inline)
 
@@ -262,9 +287,9 @@ class TwoPassConverter(MarkdownConverter):
         macro_data_div = None
         for child in el.children:
             if (
-                    hasattr(child, "attrs") and
-                    "id" in child.attrs and
-                    child.attrs["id"].startswith("drawio-macro-data-")
+                hasattr(child, "attrs")
+                and "id" in child.attrs
+                and child.attrs["id"].startswith("drawio-macro-data-")
             ):
                 macro_data_div = child
                 break
@@ -284,7 +309,9 @@ class TwoPassConverter(MarkdownConverter):
 
         diagram_name = macro_json.get("diagramName", "")
         preview_name = macro_json.get("previewName", "")
-        print("Detected draw.io diagramName:", diagram_name, "previewName:", preview_name)
+        print(
+            "Detected draw.io diagramName:", diagram_name, "previewName:", preview_name
+        )
 
         # Possibly read style from the div
         drawio_macro_div = el.find("div", {"class": "drawio-macro"})
@@ -299,7 +326,9 @@ class TwoPassConverter(MarkdownConverter):
                 height_px = h_match.group(1)
 
         # Download the PNG
-        download_url, att_title = get_drawio_attachment(page_id, diagram_name=diagram_name)
+        download_url, att_title = get_drawio_attachment(
+            page_id, diagram_name=diagram_name
+        )
         if not download_url:
             return "\n\n[Drawio diagram attachment not found]\n\n"
 
@@ -344,11 +373,11 @@ class TwoPassConverter(MarkdownConverter):
             # Example bullet list
             lines = []
             # lines.append("## Table of Contents\n")
-            for (level, anchor, heading_text) in all_headings:
+            for level, anchor, heading_text in all_headings:
                 if level == 1:
                     indent = ""
                 else:
-                    indent = "  " * (level-1)
+                    indent = "  " * (level - 1)
                 line = f"{indent}- [{heading_text}](#{anchor})"
                 lines.append(line)
             toc_markdown = "\n".join(lines) + "\n\n"
@@ -357,6 +386,7 @@ class TwoPassConverter(MarkdownConverter):
             text = text.replace(placeholder, toc_markdown)
 
         return text
+
 
 def custom_md(html_content):
     """
@@ -368,13 +398,14 @@ def custom_md(html_content):
     final_md = converter.finalize_toc(intermediate_md)
     return final_md
 
+
 # ----------------- MAIN SCRIPT -----------------
 parser = argparse.ArgumentParser(description="Confluence to Markdown Converter")
 # Flag to force manual input
 parser.add_argument(
-    '--manual',
-    action='store_true',
-    help='Force manual input even if environment variables are set'
+    "--manual",
+    action="store_true",
+    help="Force manual input even if environment variables are set",
 )
 args = parser.parse_args()
 
@@ -382,11 +413,13 @@ if args.manual:
     PAGE_URL = input("Enter the Confluence page URL: ")
     BEARER_TOKEN = getpass("Enter your Confluence API token: ")
 else:
-    PAGE_URL = os.getenv('PAGE_URL')
-    BEARER_TOKEN = os.getenv('BEARER_TOKEN')
+    PAGE_URL = os.getenv("PAGE_URL")
+    BEARER_TOKEN = os.getenv("BEARER_TOKEN")
     if not PAGE_URL or not BEARER_TOKEN:
         print("No environment variables found.")
-        print("Please set the PAGE_URL and BEARER_TOKEN environment variables or use --manual.")
+        print(
+            "Please set the PAGE_URL and BEARER_TOKEN environment variables or use --manual."
+        )
         exit(1)
 
 parsed_url = urlparse(PAGE_URL)
@@ -400,14 +433,11 @@ else:
     print("Extracted SPACE_KEY:", space_key)
     print("Extracted PAGE_TITLE:", page_title)
 
-headers = {
-    "Authorization": f"Bearer {BEARER_TOKEN}",
-    "Accept": "application/json"
-}
+headers = {"Authorization": f"Bearer {BEARER_TOKEN}", "Accept": "application/json"}
 
-clear_images_folder("images")
+os.makedirs("content") if not os.path.exists("content") else True
 
-CONTENT_API = f"{BASE_URL}/rest/api/content"
+CONTENT_API = f"{BASE_URL}/confluence/rest/api/content"
 
 # Retrieve the page HTML
 if page_id:
@@ -417,7 +447,7 @@ else:
     params = {
         "spaceKey": space_key,
         "title": page_title,
-        "expand": "space,body.view,version,container"
+        "expand": "space,body.view,version,container",
     }
     response = requests.get(CONTENT_API, headers=headers, params=params)
 
@@ -436,13 +466,12 @@ if (page_id and "id" in data) or (data.get("size", 0) > 0):
 
     # 1) Convert HTML -> Markdown with placeholders for TOC
     # 2) Then replace placeholders with an actual bullet list referencing discovered headings
-    converted_markdown = custom_md(html_content)
-    markdown_content = f"# {page_title}\n\n" + converted_markdown
+    converted_markdown = custom_md(html_content).lstrip().rstrip() + "\n"
 
     # Save the Markdown content to a file named after the page title
-    with open("{0}.md".format(page_title) , "w", encoding="utf-8") as f:
-        f.write(markdown_content)
+    with open("{0}/{1}.md".format("content", page_title), "w", encoding="utf-8") as f:
+        f.write(converted_markdown)
 
-    print("Markdown saved in {0}.md".format(page_title))
+    print("Markdown saved in {0}/{1}.md".format("content", page_title))
 else:
     print("No page found.")
