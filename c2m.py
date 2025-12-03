@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, unquote, unquote_plus, urlparse
 import requests
 import urllib3
 from markdownify import MarkdownConverter
+from urllib3.exceptions import ResponseNotChunked
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -454,6 +455,21 @@ else:
 response.raise_for_status()
 data = response.json()
 
+# Retrieve page labels
+labels = []
+if page_id:
+    api_url = f"{CONTENT_API}/{page_id}/label"
+    try:
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()
+        if response.status_code == 200:
+            labels = [item["name"] for item in response.json()["results"]]
+    except urllib3.exceptions.RequestError as e:
+        print(f"Network Error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+
 # If valid page data
 if (page_id and "id" in data) or (data.get("size", 0) > 0):
     result = data if page_id else data["results"][0]
@@ -467,6 +483,13 @@ if (page_id and "id" in data) or (data.get("size", 0) > 0):
     # 1) Convert HTML -> Markdown with placeholders for TOC
     # 2) Then replace placeholders with an actual bullet list referencing discovered headings
     converted_markdown = custom_md(html_content).lstrip().rstrip() + "\n"
+
+    # Add labels if present
+    labels_line = ""
+    for label in labels:
+        prefix = " " if len(labels_line) > 0 else ""
+        labels_line += prefix + "#" + label
+    converted_markdown += "\n" + labels_line + "\n" if len(labels_line) > 0 else ""
 
     # Save the Markdown content to a file named after the page title
     with open("{0}/{1}.md".format("content", page_title), "w", encoding="utf-8") as f:
